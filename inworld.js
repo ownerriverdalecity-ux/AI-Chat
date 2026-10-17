@@ -24,10 +24,16 @@
     rateValue.textContent = Number(rateInput.value).toFixed(2).replace(/0$/, "") + "×";
   });
   voiceSelect.addEventListener("change", () => {
-    if (voiceSelect.value !== "custom-design") voiceIdInput.value = voiceSelect.value;
+    if (voiceSelect.value === "custom-design") {
+      voiceIdInput.value = "";
+      voiceIdInput.placeholder = "Describe voice: age, accent, tone, delivery…";
+    } else {
+      voiceIdInput.value = voiceSelect.value;
+      voiceIdInput.placeholder = "Voice ID or describe your voice";
+    }
   });
   voiceIdInput.addEventListener("input", () => {
-    if (![...voiceSelect.options].some(option => option.value === voiceIdInput.value)) voiceSelect.value = "custom";
+    if (![...voiceSelect.options].some(option => option.value === voiceIdInput.value)) voiceSelect.value = "custom-design";
   });
 
   async function generate() {
