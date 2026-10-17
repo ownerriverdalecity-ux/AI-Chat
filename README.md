@@ -42,3 +42,22 @@ Voice IDs depend on your Inworld account and permissions. If a sample voice is u
 - This simple static-style site uses a small built-in Node.js HTTP server as a secure API proxy. It has no third-party packages.
 - The character's conversational replies are still demo responses; Inworld integration currently supplies text-to-speech, not the language model that writes those replies.
 - Use HTTPS and suitable access controls if deploying publicly. Do not expose the proxy to untrusted users without rate limits and abuse protections.
+
+
+## Context-aware AI chat
+
+The chat can use an OpenAI API model to answer general questions, follow the conversation, and stop repeating the same generic fallback phrases. To enable it, configure the API key on the machine hosting `server.js`:
+
+macOS / Linux:
+```sh
+export OPENAI_API_KEY='your-api-key'
+node server.js
+```
+
+Windows PowerShell:
+```powershell
+$env:OPENAI_API_KEY = "your-api-key"
+node server.js
+```
+
+Optional model override: set `OPENAI_MODEL` (defaults to `gpt-4o-mini`). Keep the key in the host's environment variables/secrets, never in browser code or committed files. GitHub Pages is static hosting and cannot run `server.js`; the AI chat works only when the page is served from a deployed Node backend with this variable configured. Without that backend, the page shows a clearly labeled limited offline fallback instead of pretending it is a full AI assistant.
