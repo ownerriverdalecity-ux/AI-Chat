@@ -24,6 +24,37 @@ function sendJson(res, status, body) {
 }
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, "http://localhost");
+  if (req.method === "POST" && url.pathname === "/api/chat") {
+    const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
+    if (!OPENAI_API_KEY) return sendJson(res, 503, { error: "AI chat is not configured. Set OPENAI_API_KEY on the server." });
+    let raw = "";
+    req.on("data", chunk => { raw += chunk; if (raw.length > 50000) req.destroy(); });
+    req.on("end", async () => {
+      try {
+        const input = JSON.parse(raw || "{}");
+        if (!Array.isArray(input.messages) || input.messages.length === 0) return sendJson(res, 400, { error: "Conversation messages are required." });
+        const messages = input.messages.slice(-20).map(m => ({
+          role: m.role === "assistant" ? "assistant" : "user",
+          content: String(m.content || "").slice(0, 6000)
+        }));
+        messages.unshift({ role: "system", content: "You are Arthur Bennett, a warm, thoughtful, practical general-purpose assistant. Answer the actual question directly and helpfully. Explain, solve, draft, brainstorm, calculate, or give concrete steps when asked. Avoid generic filler and do not ask for more information when you can reasonably proceed. If a request is clear, do it. If ambiguous but actionable, state a reasonable assumption and help. Be honest about uncertainty. Match the user's language. Keep answers clear and appropriately detailed." });
+        const upstream = await fetch("https://api.openai.com/v1/chat/completions", {
+          method: "POST",
+          headers: { "Authorization": "Bearer " + OPENAI_API_KEY, "Content-Type": "application/json" },
+          body: JSON.stringify({ model: process.env.OPENAI_MODEL || "gpt-4o-mini", messages, temperature: 0.7 }),
+          signal: AbortSignal.timeout(60000)
+        });
+        const result = await upstream.json().catch(() => ({}));
+        if (!upstream.ok) return sendJson(res, upstream.status, { error: result?.error?.message || "AI provider request failed." });
+        const reply = result?.choices?.[0]?.message?.content;
+        if (typeof reply !== "string" || !reply.trim()) return sendJson(res, 502, { error: "AI service returned an empty reply." });
+        return sendJson(res, 200, { reply: reply.trim() });
+      } catch (error) {
+        return sendJson(res, 500, { error: error.message || "Could not process the AI chat request." });
+      }
+    });
+    return;
+  }
   if (req.method === "POST" && url.pathname === "/api/tts") {
     if (!API_KEY) return sendJson(res, 503, { error: "Inworld is not configured on the server. Set INWORLD_API_KEY to your Inworld Basic Base64 credential, then restart the server." });
     let raw = "";
@@ -85,4 +116,5 @@ const server = http.createServer(async (req, res) => {
 server.listen(PORT, () => {
   console.log("VoiceRoom running at http://localhost:" + PORT);
   if (!API_KEY) console.log("Set INWORLD_API_KEY to enable Inworld TTS.");
+  if (!process.env.OPENAI_API_KEY) console.log("Set OPENAI_API_KEY to enable context-aware AI chat.");
 });
