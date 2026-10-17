@@ -1,4 +1,4 @@
-/* VoiceRoom — plain JavaScript only; no external libraries or plugins. */
+/* VoiceRoom: vanilla JavaScript chat and browser text-to-speech. */
 (function () {
   "use strict";
   const intro = "Hello there. I’m Arthur. I’ve spent a lifetime solving engineering problems, and I still believe curiosity is the best tool we have. What would you like to talk about?";
@@ -9,8 +9,14 @@
   const micButton = document.getElementById("mic");
   const notice = document.getElementById("notice");
   const status = document.getElementById("status");
+  const ttsText = document.getElementById("ttsText");
+  const ttsVoice = document.getElementById("ttsVoice");
+  const ttsRate = document.getElementById("ttsRate");
+  const rateValue = document.getElementById("rateValue");
+  const ttsStatus = document.getElementById("ttsStatus");
   let busy = false;
   let recognition = null;
+  let availableVoices = [];
 
   function tell(text) {
     notice.textContent = text;
@@ -32,21 +38,62 @@
     if (/how are you|how do you feel/.test(text)) return "I’m doing well, thank you for asking. A good conversation and a curious mind can brighten just about any day.";
     return "That’s interesting. Let’s take our time with it. Tell me a little more about what matters most to you, and we’ll work through it together.";
   }
-  function speak(text) {
-    if (!("speechSynthesis" in window)) {
-      tell("Speech playback is not supported by this browser.");
+
+  function refreshVoices() {
+    if (!("speechSynthesis" in window)) return;
+    availableVoices = window.speechSynthesis.getVoices();
+    const previous = ttsVoice.value;
+    ttsVoice.replaceChildren();
+    const defaultOption = document.createElement("option");
+    defaultOption.value = "default";
+    defaultOption.textContent = "Default English voice";
+    ttsVoice.appendChild(defaultOption);
+    availableVoices.forEach((voice, index) => {
+      const option = document.createElement("option");
+      option.value = String(index);
+      option.textContent = voice.name + (voice.lang ? " (" + voice.lang + ")" : "");
+      ttsVoice.appendChild(option);
+    });
+    if ([...ttsVoice.options].some(option => option.value === previous)) ttsVoice.value = previous;
+  }
+
+  function speak(text, customRate) {
+    if (!("speechSynthesis" in window) || !("SpeechSynthesisUtterance" in window)) {
+      tell("Speech playback is not supported by this browser. Try a current version of Chrome, Edge, or Safari.");
+      ttsStatus.textContent = "Speech synthesis is unavailable in this browser.";
+      ttsStatus.classList.add("error");
       return;
     }
     window.speechSynthesis.cancel();
     const utterance = new SpeechSynthesisUtterance(text);
-    utterance.lang = "en-US";
-    utterance.rate = 0.92;
+    const selected = ttsVoice.value;
+    if (selected !== "default" && availableVoices[Number(selected)]) {
+      utterance.voice = availableVoices[Number(selected)];
+      utterance.lang = utterance.voice.lang || "en-US";
+    } else {
+      utterance.lang = "en-US";
+    }
+    utterance.rate = customRate || Number(ttsRate.value) || 0.92;
     utterance.pitch = 0.85;
-    utterance.onstart = () => { status.textContent = "● Arthur is speaking"; };
-    utterance.onend = () => { status.textContent = "● Ready to talk"; };
-    utterance.onerror = () => { status.textContent = "● Ready to talk"; };
+    utterance.onstart = () => {
+      status.textContent = "● Arthur is speaking";
+      ttsStatus.textContent = "Speaking text aloud…";
+      ttsStatus.classList.remove("error");
+    };
+    utterance.onend = () => {
+      status.textContent = "● Ready to talk";
+      ttsStatus.textContent = "Speech finished.";
+    };
+    utterance.onerror = event => {
+      status.textContent = "● Ready to talk";
+      if (event.error !== "canceled" && event.error !== "interrupted") {
+        ttsStatus.textContent = "Could not play speech. Try another voice or browser.";
+        ttsStatus.classList.add("error");
+      }
+    };
     window.speechSynthesis.speak(utterance);
   }
+
   function send(text) {
     const value = (text || input.value).trim();
     if (!value || busy) return;
@@ -66,13 +113,14 @@
       addMessage(reply, "assistant");
       busy = false;
       sendButton.disabled = !input.value.trim();
-      speak(reply);
+      speak(reply, 0.92);
     }, 450);
   }
+
   form.addEventListener("submit", event => { event.preventDefault(); send(); });
   input.addEventListener("input", () => { sendButton.disabled = !input.value.trim() || busy; });
   document.querySelectorAll("[data-prompt]").forEach(button => button.addEventListener("click", () => send(button.dataset.prompt)));
-  document.getElementById("preview").addEventListener("click", () => speak(intro));
+  document.getElementById("preview").addEventListener("click", () => speak(intro, 0.92));
   document.getElementById("reset").addEventListener("click", () => {
     if ("speechSynthesis" in window) window.speechSynthesis.cancel();
     messages.replaceChildren();
@@ -80,6 +128,31 @@
     tell("");
     status.textContent = "● Ready to talk";
   });
+
+  document.getElementById("generateSpeech").addEventListener("click", () => {
+    const text = ttsText.value.trim();
+    if (!text) {
+      ttsStatus.textContent = "Enter some text before generating speech.";
+      ttsStatus.classList.add("error");
+      ttsText.focus();
+      return;
+    }
+    tell("");
+    ttsStatus.classList.remove("error");
+    speak(text, Number(ttsRate.value));
+  });
+  document.getElementById("stopSpeech").addEventListener("click", () => {
+    if ("speechSynthesis" in window) window.speechSynthesis.cancel();
+    status.textContent = "● Ready to talk";
+    ttsStatus.textContent = "Speech stopped.";
+    ttsStatus.classList.remove("error");
+  });
+  ttsRate.addEventListener("input", () => { rateValue.textContent = Number(ttsRate.value).toFixed(2).replace(/0$/, "") + "×"; });
+  if ("speechSynthesis" in window) {
+    refreshVoices();
+    window.speechSynthesis.addEventListener("voiceschanged", refreshVoices);
+  }
+
   micButton.addEventListener("click", () => {
     const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
     if (!SpeechRecognition) {
