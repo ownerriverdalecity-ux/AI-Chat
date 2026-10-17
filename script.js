@@ -1,27 +1,12 @@
-/* VoiceRoom: vanilla JavaScript chat and browser text-to-speech. */
+/* VoiceRoom chat: conversational API when configured, useful local fallback otherwise. */
 (function () {
   "use strict";
-  const intro = "Hello there. I’m Arthur. I’ve spent a lifetime solving engineering problems, and I still believe curiosity is the best tool we have. What would you like to talk about?";
-  const messages = document.getElementById("messages");
-  const form = document.getElementById("form");
-  const input = document.getElementById("input");
-  const sendButton = document.getElementById("send");
-  const micButton = document.getElementById("mic");
-  const notice = document.getElementById("notice");
-  const status = document.getElementById("status");
-  const ttsText = document.getElementById("ttsText");
-  const ttsVoice = document.getElementById("ttsVoice");
-  const ttsRate = document.getElementById("ttsRate");
-  const rateValue = document.getElementById("rateValue");
-  const ttsStatus = document.getElementById("ttsStatus");
-  let busy = false;
-  let recognition = null;
-  let availableVoices = [];
-
-  function tell(text) {
-    notice.textContent = text;
-    notice.classList.toggle("show", Boolean(text));
-  }
+  const $ = id => document.getElementById(id);
+  const messages = $("messages"), form = $("form"), input = $("input");
+  const sendButton = $("send"), micButton = $("mic"), notice = $("notice"), status = $("status");
+  let busy = false, recognition = null, chatHistory = [];
+  const systemPrompt = "You are Arthur Bennett, a warm, thoughtful, practical 70-year-old engineer and helpful general-purpose assistant. Answer the user's actual question directly, like a capable AI assistant: explain, solve, draft, brainstorm, calculate, or give steps when asked. Do not repeat generic phrases like 'that's interesting' or ask for more information unless a specific missing detail is genuinely necessary. If the request is clear, do it immediately. If vague but actionable, make a reasonable assumption and proceed. Be honest about uncertainty and limitations. Use concise, natural language and adapt to the user's language. Do not claim to be ChatGPT; you are Arthur.";
+  function tell(text) { notice.textContent = text; notice.classList.toggle("show", Boolean(text)); }
   function scrollDown() { messages.scrollTop = messages.scrollHeight; }
   function addMessage(text, who) {
     const bubble = document.createElement("div");
@@ -29,72 +14,68 @@
     bubble.textContent = text;
     messages.appendChild(bubble);
     scrollDown();
+    return bubble;
   }
-  function answerFor(message) {
-    const text = message.toLowerCase();
-    if (/^(hi|hello|hey|good morning)\b/.test(text)) return "Hello there. It’s lovely to meet you. What have you been curious about lately?";
-    if (/engineer|engineering|build|machine|bridge/.test(text)) return "That’s a good engineering question. I like to start with the fundamentals: understand the problem, make the simplest useful model, and test your assumptions. Which part shall we explore first?";
-    if (/life|advice|career|work/.test(text)) return "Here’s something years of problem-solving taught me: stay curious, be patient with yourself, and don’t be afraid to ask a simple question. That’s often where the real insight begins.";
-    if (/how are you|how do you feel/.test(text)) return "I’m doing well, thank you for asking. A good conversation and a curious mind can brighten just about any day.";
-    return "That’s interesting. Let’s take our time with it. Tell me a little more about what matters most to you, and we’ll work through it together.";
-  }
-
-  function refreshVoices() {
-    if (!("speechSynthesis" in window)) return;
-    availableVoices = window.speechSynthesis.getVoices();
-    const previous = ttsVoice.value;
-    ttsVoice.replaceChildren();
-    const defaultOption = document.createElement("option");
-    defaultOption.value = "default";
-    defaultOption.textContent = "Default English voice";
-    ttsVoice.appendChild(defaultOption);
-    availableVoices.forEach((voice, index) => {
-      const option = document.createElement("option");
-      option.value = String(index);
-      option.textContent = voice.name + (voice.lang ? " (" + voice.lang + ")" : "");
-      ttsVoice.appendChild(option);
-    });
-    if ([...ttsVoice.options].some(option => option.value === previous)) ttsVoice.value = previous;
-  }
-
-  function speak(text, customRate) {
-    if (!("speechSynthesis" in window) || !("SpeechSynthesisUtterance" in window)) {
-      tell("Speech playback is not supported by this browser. Try a current version of Chrome, Edge, or Safari.");
-      ttsStatus.textContent = "Speech synthesis is unavailable in this browser.";
-      ttsStatus.classList.add("error");
-      return;
+  function localAnswer(message) {
+    const raw = message.trim(), t = raw.toLowerCase();
+    if (/^(hi|hello|hey|good morning|good evening|good afternoon)[!. ]*$/i.test(raw))
+      return "Hello! Good to have you here. What can I help you with today?";
+    if (/\b(thank you|thanks)\b/.test(t)) return "You're welcome! I'm glad to help.";
+    if (/\b(go|continue|do it|carry on|proceed|yes,? go ahead)\b/.test(t) && t.length < 45)
+      return "Absolutely — I'll continue with the plan and take the next step. If you meant a specific action, tell me which one and I'll help with it.";
+    if (/\b(write|draft|compose)\b/.test(t)) return "I can draft that. Here's a starting point:\n\n" + raw.replace(/^(please\s+)?(can you\s+)?(write|draft|compose)\s*/i,"").replace(/[?.!]+$/,"") + "\n\nHello,\n\nI’m reaching out about this and would appreciate your thoughts. Please let me know what works best.\n\nBest regards";
+    if (/\b(translate|in spanish|into spanish|in french|into french)\b/.test(t)) return "I can help translate that, but I need the text you want translated. Paste it here and I'll translate it directly.";
+    if (/\b(math|calculate|what is \d|\d\s*[+*/-]\s*\d)/.test(t)) {
+      const m = raw.match(/(-?\d+(?:\.\d+)?)\s*([+*/-])\s*(-?\d+(?:\.\d+)?)/);
+      if (m) { const a=Number(m[1]), b=Number(m[3]); if(m[2]==="/"&&b===0)return "Division by zero is undefined."; return "The answer is " + ({"+":a+b,"-":a-b,"*":a*b,"/":a/b}[m[2]]) + "."; }
     }
+    if (/\b(bridge|engineering|engineer|machine|build|physics)\b/.test(t))
+      return "A useful way to approach this is to break it into parts: identify the goal, list the forces or constraints, estimate the important quantities, then test the simplest model. For a bridge, for example, the deck transfers loads into beams or cables, which pass them to supports and foundations. The exact design depends on span, materials, wind, traffic, and ground conditions.";
+    if (/\b(life|advice|career|work|job|motivat|habit|goal)\b/.test(t))
+      return "My practical advice is to turn the problem into one small next action. Decide what a good result would look like, do the first manageable step, and review what happened rather than waiting for perfect confidence. If you tell me the goal, I can help turn it into a concrete plan.";
+    if (/\b(space|planet|universe|black hole|astronomy)\b/.test(t))
+      return "One fascinating thing about space is that looking far away means looking back in time: sunlight takes about 8 minutes to reach Earth, while light from distant galaxies can travel for billions of years. What we observe is a record of the universe at earlier stages.";
+    if (/\b(history|historical|who invented|when did)\b/.test(t))
+      return "A good historical answer depends on the specific event or invention, because many discoveries developed through contributions from several people. Tell me the person, period, or event you have in mind and I’ll explain the timeline and why it mattered.";
+    if (/\b(travel|visit|places|holiday|vacation)\b/.test(t))
+      return "For a great trip, balance one or two must-see places with time to wander, eat locally, and rest. I can suggest an itinerary, but the best choice depends on destination, dates, budget, and whether you prefer culture, nature, food, or beaches.";
+    if (/\b(help me|how do i|how to|explain|what is|what are|why does|why is|solve|plan|summari[sz]e|compare|recommend|ideas for)\b/.test(t))
+      return "Here's how I'd start: define the outcome you want, split it into a few clear steps, and tackle the first one now. I can give a much more specific answer once I can use the AI chat service. At the moment this site is running without its AI backend, so this reply is a limited offline fallback—not a full AI answer.";
+    return "I’ve received your message, but the full AI chat service isn’t connected on this deployment yet. The site is currently using a small offline fallback, which can’t reliably answer every question. Configure OPENAI_API_KEY on the Node server and open VoiceRoom through that server to get direct, context-aware answers.";
+  }
+  async function getReply(text) {
+    chatHistory.push({ role: "user", content: text });
+    try {
+      const response = await fetch("/api/chat", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ messages: chatHistory.slice(-20) })
+      });
+      const type = response.headers.get("content-type") || "";
+      if (type.includes("application/json")) {
+        const data = await response.json();
+        if (response.ok && data.reply) {
+          chatHistory.push({ role: "assistant", content: data.reply });
+          if (chatHistory.length > 24) chatHistory = chatHistory.slice(-24);
+          return { text: data.reply, offline: false };
+        }
+      }
+    } catch (_) {}
+    chatHistory.pop();
+    return { text: localAnswer(text), offline: true };
+  }
+  function speak(text) {
+    if (!("speechSynthesis" in window)) return;
     window.speechSynthesis.cancel();
     const utterance = new SpeechSynthesisUtterance(text);
-    const selected = ttsVoice.value;
-    if (selected !== "default" && availableVoices[Number(selected)]) {
-      utterance.voice = availableVoices[Number(selected)];
-      utterance.lang = utterance.voice.lang || "en-US";
-    } else {
-      utterance.lang = "en-US";
-    }
-    utterance.rate = customRate || Number(ttsRate.value) || 0.92;
-    utterance.pitch = 0.85;
-    utterance.onstart = () => {
-      status.textContent = "● Arthur is speaking";
-      ttsStatus.textContent = "Speaking text aloud…";
-      ttsStatus.classList.remove("error");
-    };
-    utterance.onend = () => {
-      status.textContent = "● Ready to talk";
-      ttsStatus.textContent = "Speech finished.";
-    };
-    utterance.onerror = event => {
-      status.textContent = "● Ready to talk";
-      if (event.error !== "canceled" && event.error !== "interrupted") {
-        ttsStatus.textContent = "Could not play speech. Try another voice or browser.";
-        ttsStatus.classList.add("error");
-      }
-    };
+    utterance.lang = "en-US";
+    utterance.rate = 0.96;
+    utterance.pitch = 0.92;
+    utterance.onstart = () => { status.textContent = "● Arthur is speaking"; };
+    utterance.onend = () => { status.textContent = "● Ready to talk"; };
+    utterance.onerror = () => { status.textContent = "● Ready to talk"; };
     window.speechSynthesis.speak(utterance);
   }
-
-  function send(text) {
+  async function send(text) {
     const value = (text || input.value).trim();
     if (!value || busy) return;
     tell("");
@@ -102,73 +83,53 @@
     input.value = "";
     busy = true;
     sendButton.disabled = true;
-    const pending = document.createElement("div");
-    pending.className = "bubble assistant";
-    pending.textContent = "Arthur is thinking…";
-    messages.appendChild(pending);
-    scrollDown();
-    window.setTimeout(() => {
-      const reply = answerFor(value);
-      pending.remove();
-      addMessage(reply, "assistant");
+    const pending = addMessage("Thinking…", "assistant");
+    status.textContent = "● Thinking";
+    try {
+      const result = await getReply(value);
+      pending.textContent = result.text;
+      if (result.offline) {
+        tell("AI backend is not connected. Showing a limited offline reply; configure OPENAI_API_KEY on the Node server for real answers.");
+      }
+      speak(result.text);
+    } catch (error) {
+      pending.textContent = "I couldn't complete that reply. Please try again.";
+      tell(error.message || "Something went wrong.");
+    } finally {
       busy = false;
       sendButton.disabled = !input.value.trim();
-      speak(reply, 0.92);
-    }, 450);
+      status.textContent = "● Ready to talk";
+      scrollDown();
+    }
   }
-
   form.addEventListener("submit", event => { event.preventDefault(); send(); });
   input.addEventListener("input", () => { sendButton.disabled = !input.value.trim() || busy; });
   document.querySelectorAll("[data-prompt]").forEach(button => button.addEventListener("click", () => send(button.dataset.prompt)));
-  document.getElementById("preview").addEventListener("click", () => speak(intro, 0.92));
-  document.getElementById("reset").addEventListener("click", () => {
+  $("preview").addEventListener("click", () => speak("Hello there. I’m Arthur Bennett. Let’s explore an interesting idea together."));
+  $("reset").addEventListener("click", () => {
     if ("speechSynthesis" in window) window.speechSynthesis.cancel();
+    chatHistory = [];
     messages.replaceChildren();
-    addMessage("A fresh page. I like that. What’s on your mind?", "assistant");
+    addMessage("Hi again. What can I help you work through?", "assistant");
     tell("");
     status.textContent = "● Ready to talk";
   });
-
-  document.getElementById("generateSpeech").addEventListener("click", () => {
-    const text = ttsText.value.trim();
-    if (!text) {
-      ttsStatus.textContent = "Enter some text before generating speech.";
-      ttsStatus.classList.add("error");
-      ttsText.focus();
-      return;
-    }
-    tell("");
-    ttsStatus.classList.remove("error");
-    speak(text, Number(ttsRate.value));
-  });
-  document.getElementById("stopSpeech").addEventListener("click", () => {
+  $("stopSpeech").addEventListener("click", () => {
     if ("speechSynthesis" in window) window.speechSynthesis.cancel();
+    const audio = $("inworldAudio"); if (audio) audio.pause();
     status.textContent = "● Ready to talk";
-    ttsStatus.textContent = "Speech stopped.";
-    ttsStatus.classList.remove("error");
   });
-  ttsRate.addEventListener("input", () => { rateValue.textContent = Number(ttsRate.value).toFixed(2).replace(/0$/, "") + "×"; });
-  if ("speechSynthesis" in window) {
-    refreshVoices();
-    window.speechSynthesis.addEventListener("voiceschanged", refreshVoices);
-  }
-
   micButton.addEventListener("click", () => {
     const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-    if (!SpeechRecognition) {
-      tell("Speech recognition is unavailable in this browser. Try Chrome or type your message.");
-      return;
-    }
+    if (!SpeechRecognition) { tell("Speech recognition isn't available in this browser. Type your message instead."); return; }
     if (recognition) { recognition.stop(); return; }
     recognition = new SpeechRecognition();
-    recognition.lang = "en-US";
-    recognition.interimResults = false;
-    recognition.maxAlternatives = 1;
+    recognition.lang = "en-US"; recognition.interimResults = false; recognition.maxAlternatives = 1;
     recognition.onstart = () => { micButton.classList.add("listening"); micButton.textContent = "■"; tell(""); };
     recognition.onresult = event => send(event.results[0][0].transcript);
-    recognition.onerror = () => tell("I couldn't catch that. Check microphone permissions and try again.");
+    recognition.onerror = () => tell("I couldn't hear that clearly. Check microphone permission and try again.");
     recognition.onend = () => { micButton.classList.remove("listening"); micButton.textContent = "🎙"; recognition = null; };
-    try { recognition.start(); } catch { tell("Microphone could not start. Check browser permissions."); }
+    try { recognition.start(); } catch (_) { tell("Microphone could not start. Check browser permissions."); }
   });
   sendButton.disabled = true;
 })();
